@@ -40,4 +40,7 @@ grant {
   permission java.lang.RuntimePermission "accessDeclaredMembers";
   // Also needed because of jackson-databind:
   permission java.lang.reflect.ReflectPermission "suppressAccessChecks";
+
+  // needed by GeoIP datasource to get GeoIP database
+  permission java.net.SocketPermission "*", "connect,resolve";
 };
