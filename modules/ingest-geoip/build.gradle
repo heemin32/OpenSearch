@@ -44,7 +44,7 @@ dependencies {
   api('com.maxmind.db:maxmind-db:3.0.0')
   api("com.fasterxml.jackson.core:jackson-annotations:${versions.jackson}")
   api("com.fasterxml.jackson.core:jackson-databind:${versions.jackson_databind}")
-
+  implementation "org.apache.commons:commons-csv:1.10.0"
   testImplementation 'org.elasticsearch:geolite2-databases:20191119'
 }
 

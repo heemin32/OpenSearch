@@ -37,16 +37,35 @@ import com.maxmind.db.NodeCache;
 import com.maxmind.db.Reader;
 import com.maxmind.geoip2.DatabaseReader;
 import com.maxmind.geoip2.model.AbstractResponse;
+import org.opensearch.action.ActionRequest;
+import org.opensearch.action.ActionResponse;
+import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
+import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.common.Booleans;
 import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.cache.Cache;
 import org.opensearch.common.cache.CacheBuilder;
+import org.opensearch.common.component.LifecycleComponent;
 import org.opensearch.common.io.PathUtils;
+import org.opensearch.common.settings.ClusterSettings;
+import org.opensearch.common.settings.IndexScopedSettings;
 import org.opensearch.common.settings.Setting;
+import org.opensearch.common.settings.Settings;
+import org.opensearch.common.settings.SettingsFilter;
 import org.opensearch.core.internal.io.IOUtils;
+import org.opensearch.indices.SystemIndexDescriptor;
 import org.opensearch.ingest.Processor;
+import org.opensearch.ingest.geoip.datasource.PutDatasourceAction;
+import org.opensearch.ingest.geoip.datasource.PutDatasourceTransportAction;
+import org.opensearch.ingest.geoip.datasource.common.DatasourceSettings;
+import org.opensearch.ingest.geoip.datasource.RestPutDatasourceAction;
+import org.opensearch.ingest.geoip.datasource.DatasourceTaskManager;
 import org.opensearch.plugins.IngestPlugin;
 import org.opensearch.plugins.Plugin;
+import org.opensearch.plugins.SystemIndexPlugin;
+import org.opensearch.rest.RestController;
+import org.opensearch.rest.RestHandler;
+import org.opensearch.threadpool.ExecutorBuilder;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -55,6 +74,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -62,9 +82,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
-public class IngestGeoIpModulePlugin extends Plugin implements IngestPlugin, Closeable {
+public class IngestGeoIpModulePlugin extends Plugin implements IngestPlugin, Closeable, SystemIndexPlugin {
+    public static final String GEOIP_DATASOURCE_INDEX_NAME = ".geoip-datasource";
     public static final Setting<Long> CACHE_SIZE = Setting.longSetting("ingest.geoip.cache_size", 1000, 0, Setting.Property.NodeScope);
 
     static String[] DEFAULT_DATABASE_FILENAMES = new String[] { "GeoLite2-ASN.mmdb", "GeoLite2-City.mmdb", "GeoLite2-Country.mmdb" };
@@ -73,7 +95,7 @@ public class IngestGeoIpModulePlugin extends Plugin implements IngestPlugin, Clo
 
     @Override
     public List<Setting<?>> getSettings() {
-        return Arrays.asList(CACHE_SIZE);
+        return Arrays.asList(CACHE_SIZE, DatasourceSettings.DATASOURCE_ENDPOINT, DatasourceSettings.DATASOURCE_UPDATE_INTERVAL);
     }
 
     @Override
@@ -172,6 +194,39 @@ public class IngestGeoIpModulePlugin extends Plugin implements IngestPlugin, Clo
         if (databaseReaders != null) {
             IOUtils.close(databaseReaders.values());
         }
+    }
+
+    @Override
+    public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
+        return Arrays.asList(new ActionHandler<>(PutDatasourceAction.INSTANCE, PutDatasourceTransportAction.class));
+    }
+
+    @Override
+    public List<RestHandler> getRestHandlers(
+        Settings settings,
+        RestController restController,
+        ClusterSettings clusterSettings,
+        IndexScopedSettings indexScopedSettings,
+        SettingsFilter settingsFilter,
+        IndexNameExpressionResolver indexNameExpressionResolver,
+        Supplier<DiscoveryNodes> nodesInCluster
+    ) {
+        return Arrays.asList(new RestPutDatasourceAction());
+    }
+
+    @Override
+    public Collection<SystemIndexDescriptor> getSystemIndexDescriptors(Settings settings) {
+        return List.of(new SystemIndexDescriptor(GEOIP_DATASOURCE_INDEX_NAME, "System index used for GeoIP datasource"));
+    }
+
+    @Override
+    public List<ExecutorBuilder<?>> getExecutorBuilders(Settings settings) {
+        return DatasourceTaskManager.getExecutorBuilders(settings);
+    }
+
+    @Override
+    public Collection<Class<? extends LifecycleComponent>> getGuiceServiceClasses() {
+        return List.of(DatasourceTaskManager.class);
     }
 
     /**
