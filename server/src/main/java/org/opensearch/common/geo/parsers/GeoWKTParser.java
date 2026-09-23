@@ -72,6 +72,11 @@ public class GeoWKTParser {
     public static final String COMMA = ",";
     public static final String NAN = "NaN";
 
+    // maximum nesting depth allowed for a GEOMETRYCOLLECTION, mirroring the limit enforced by the
+    // iterative WellKnownText parser in libs/geo. This guards against a StackOverflowError (and the
+    // resulting fatal JVM halt) from a deeply nested geometry supplied as a WKT string.
+    public static final int MAX_DEPTH_OF_GEO_COLLECTION = 1000;
+
     private static final String NUMBER = "<NUMBER>";
     private static final String EOF = "END-OF-STREAM";
     private static final String EOL = "END-OF-LINE";
@@ -112,7 +117,7 @@ public class GeoWKTParser {
             tokenizer.wordChars('.', '.');
             tokenizer.whitespaceChars(0, ' ');
             tokenizer.commentChar('#');
-            ShapeBuilder builder = parseGeometry(tokenizer, shapeType, ignoreZValue.value(), coerce.value());
+            ShapeBuilder builder = parseGeometry(tokenizer, shapeType, ignoreZValue.value(), coerce.value(), 0);
             checkEOF(tokenizer);
             return builder;
         }
@@ -123,7 +128,8 @@ public class GeoWKTParser {
         StreamTokenizer stream,
         GeoShapeType shapeType,
         final boolean ignoreZValue,
-        final boolean coerce
+        final boolean coerce,
+        final int depth
     ) throws IOException, OpenSearchParseException {
         final GeoShapeType type = GeoShapeType.forName(nextWord(stream));
         if (shapeType != null && shapeType != GeoShapeType.GEOMETRYCOLLECTION) {
@@ -147,7 +153,7 @@ public class GeoWKTParser {
             case ENVELOPE:
                 return parseBBox(stream);
             case GEOMETRYCOLLECTION:
-                return parseGeometryCollection(stream, ignoreZValue, coerce);
+                return parseGeometryCollection(stream, ignoreZValue, coerce, depth);
             default:
                 throw new IllegalArgumentException("Unknown geometry type: " + type);
         }
@@ -303,16 +309,22 @@ public class GeoWKTParser {
     private static GeometryCollectionBuilder parseGeometryCollection(
         StreamTokenizer stream,
         final boolean ignoreZValue,
-        final boolean coerce
+        final boolean coerce,
+        final int depth
     ) throws IOException, OpenSearchParseException {
+        if (depth >= MAX_DEPTH_OF_GEO_COLLECTION) {
+            throw new OpenSearchParseException(
+                "a geometry collection with a depth greater than " + MAX_DEPTH_OF_GEO_COLLECTION + " is not supported"
+            );
+        }
         if (nextEmptyOrOpen(stream).equals(EMPTY)) {
             return null;
         }
         GeometryCollectionBuilder builder = new GeometryCollectionBuilder().shape(
-            parseGeometry(stream, GeoShapeType.GEOMETRYCOLLECTION, ignoreZValue, coerce)
+            parseGeometry(stream, GeoShapeType.GEOMETRYCOLLECTION, ignoreZValue, coerce, depth + 1)
         );
         while (nextCloserOrComma(stream).equals(COMMA)) {
-            builder.shape(parseGeometry(stream, null, ignoreZValue, coerce));
+            builder.shape(parseGeometry(stream, null, ignoreZValue, coerce, depth + 1));
         }
         return builder;
     }

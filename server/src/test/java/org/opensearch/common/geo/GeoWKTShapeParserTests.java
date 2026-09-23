@@ -495,6 +495,25 @@ public class GeoWKTShapeParserTests extends BaseGeoParsingTestCase {
         }
     }
 
+    public void testParseGeometryCollectionBoundedDepth() throws IOException {
+        // A deeply nested GEOMETRYCOLLECTION must fail with a parse exception rather than recursing
+        // until a StackOverflowError halts the JVM (see GeoWKTParser.MAX_DEPTH_OF_GEO_COLLECTION).
+        int depth = GeoWKTParser.MAX_DEPTH_OF_GEO_COLLECTION + 100;
+        StringBuilder wkt = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            wkt.append("GEOMETRYCOLLECTION(");
+        }
+        wkt.append("POINT(1 1)");
+        for (int i = 0; i < depth; i++) {
+            wkt.append(")");
+        }
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder().value(wkt.toString());
+        XContentParser parser = createParser(xContentBuilder);
+        parser.nextToken();
+        OpenSearchParseException e = expectThrows(OpenSearchParseException.class, () -> GeoWKTParser.parse(parser, null));
+        assertThat(e, hasToString(containsString("depth greater than " + GeoWKTParser.MAX_DEPTH_OF_GEO_COLLECTION)));
+    }
+
     public void testUnexpectedShapeException() throws IOException {
         XContentBuilder builder = toWKTContent(new PointBuilder(-1, 2), false);
         XContentParser parser = createParser(builder);
